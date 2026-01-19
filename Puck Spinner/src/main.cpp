@@ -1,10 +1,11 @@
-#include <Arduino.h>
-#include <Servo.h>
+#include "PuckSpinner.hpp"
 
 #define LEFT_SERVO_PIN   5
 #define RIGHT_SERVO_PIN  6
 #define TRIG_PIN         9
 #define ECHO_PIN         10
+
+#define SWITCH_PIN       2
 
 #define LEFT_STOP   1418
 #define RIGHT_STOP  1512
@@ -12,7 +13,12 @@
 #define DRIVE_DELTA 500
 
 #define OBSTACLE_CM 25 // stop if object closer than this
-#define ALGORITHM false // true = Algo 1, false = Algo 2
+
+enum Mode {
+    ALGORITHM1,
+    ALGORITHM2,
+    CALIBRATION
+};
 
 enum State {
     SCAN,
@@ -22,9 +28,13 @@ enum State {
     AVOID_STOP
 };
 
+// Global array for storing distances at different angles
+long distances[7]; // from -90 to +90 in steps of 30 degrees
+
 Servo leftWheel;
 Servo rightWheel;
 State currentState = SCAN;
+Mode mode = ALGORITHM1; // select mode here
 
 // HC-SR04 Ultrasonic distance sensor reading
 long readDistanceCM() {
@@ -85,14 +95,16 @@ long getDistanceStable() {
 
 // Scanning function
 void performScan() {
-    // Placeholder for scanning logic
-    // In a real implementation, this would rotate the robot and take distance measurements
+    for (int angle = -90; angle <= 90; angle += 30) {
+        turnDegrees(angle);
+        delay(500);
+    }
 }
 
 // Direction selection function
+// store directions in an global array and pick the best one
 void selectBestDirection() {
-    // Placeholder for direction selection logic
-    // In a real implementation, this would analyze scan data to choose the best path
+
 }
 
 // Alignment function
@@ -107,6 +119,10 @@ void moveForwardDistance(int cm) {
     // In a real implementation, this would involve wheel encoders or timing
 }
 
+void turnDegrees(int degrees) {
+    // Placeholder for turning a specific number of degrees
+    // In a real implementation, this would involve controlling the wheels to turn the robot
+}
 
 void stopWheels() {
     leftWheel.write(LEFT_STOP);
@@ -133,16 +149,21 @@ void setup() {
     pinMode(ECHO_PIN, INPUT);
     digitalWrite(TRIG_PIN, LOW);
 
+    pinMode(SWITCH_PIN, INPUT_PULLUP);
+
     leftWheel.attach(LEFT_SERVO_PIN);
     rightWheel.attach(RIGHT_SERVO_PIN);
 
     Serial.println("Initialisation done.");
     Serial.println("Selected mode :");
 
-    if (true) {
-        Serial.println(" - Puck Spinner Robot");
+    // select mode based on switch
+    if (digitalRead(SWITCH_PIN) == LOW) {
+        mode = ALGORITHM1;
+        Serial.println("Algorithm 1");
     } else {
-        Serial.println(" - Unknown mode!");
+        mode = ALGORITHM2;
+        Serial.println("Algorithm 2");
     }
 }
 
@@ -150,7 +171,7 @@ void setup() {
 void Algorithm1Loop() {
     switch (currentState) {
         case SCAN:
-            //performScan();
+            performScan();
             currentState = SELECT_DIRECTION;
             Serial.println("Scanning...");
             break;
@@ -181,9 +202,9 @@ void Algorithm1Loop() {
 }
 
 void loop() {
-    if (ALGORITHM) {
+    if (mode == ALGORITHM1) {
         Algorithm1Loop();
-    } else {
+    } else if (mode == ALGORITHM2) {
         static unsigned long lastPing = 0;
 
         static long distance = 0;
@@ -193,7 +214,6 @@ void loop() {
             Serial.print("Distance: ");
             Serial.println(distance);
         }
-
         //Algorithm2Loop();
         if (distance > 0 && distance < OBSTACLE_CM) {
             stopWheels();
