@@ -8,8 +8,8 @@ void performScan();
 long readDistanceCM();
 long readDistanceCM_filtered();
 long getDistanceStable();
-void turnDegrees(int);
-void turn90right();
+int getAverageDistance();
+void performScan();
 
 // Movement
 void moveForward();
@@ -17,3 +17,4 @@ void stopWheels();
 void turnLeft();
 void turnRight();
 void turnDegrees(int);
+void turn90right();
