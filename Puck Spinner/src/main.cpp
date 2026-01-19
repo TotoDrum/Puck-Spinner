@@ -10,9 +10,11 @@
 #define LEFT_STOP   1418
 #define RIGHT_STOP  1512
 
-#define DRIVE_DELTA 500
-
+#define DRIVE_DELTA 600 // speed for moving forward / turning
 #define OBSTACLE_CM 25 // stop if object closer than this
+#define SCAN_ANGLE 45 // degrees to turn per scan step
+#define SCAN_STEPS 8 // number of scan steps (360/45)
+#define ANGLE_DELTA 66 // delay per 10 degrees turn
 
 enum Mode {
     ALGORITHM1,
@@ -29,7 +31,7 @@ enum State {
 };
 
 // Global array for storing distances at different angles
-long distances[7]; // from -90 to +90 in steps of 30 degrees
+long distances[SCAN_STEPS]; // from 180 to -180 in steps of SCAN_ANGLE
 
 Servo leftWheel;
 Servo rightWheel;
@@ -92,19 +94,67 @@ long getDistanceStable() {
   return -1;
 }
 
+int getAverageDistance() {
+    long total = 0;
+    int count = 0;
+    long d = 0;
+
+    for (int i = 0; i < 5; i++) {
+        d = getDistanceStable();
+        if (d > 0) {
+            total += d;
+            count++;
+        }
+        delay(10);
+    }
+    if (count == 0) return -1;
+    return total / count;
+}
 
 // Scanning function
 void performScan() {
-    for (int angle = -90; angle <= 90; angle += 30) {
-        turnDegrees(angle);
-        delay(500);
+    long distance = 0;
+
+    stopWheels();
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        turnDegrees(SCAN_ANGLE);
+        distance = getAverageDistance();
+        distances[i] = distance;
+        Serial.print("Angle: ");
+        Serial.println((i - SCAN_STEPS / 2) * SCAN_ANGLE);
+        Serial.print("Distance: ");
+        Serial.println(distance);
+        stopWheels();
+    }
+    Serial.println("Scan complete.");
+    // print all values
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        Serial.print("Angle ");
+        Serial.print((i - SCAN_STEPS / 2) * SCAN_ANGLE);
+        Serial.print(": ");
+        Serial.println(distances[i]);
     }
 }
 
 // Direction selection function
-// store directions in an global array and pick the best one
 void selectBestDirection() {
+    int bestIndex = -1;
+    long maxDistance = -1;
 
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        if (distances[i] > maxDistance) {
+            maxDistance = distances[i];
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex != -1) {
+        int bestAngle = (bestIndex - SCAN_STEPS / 2) * SCAN_ANGLE;
+        Serial.print("Best angle selected: ");
+        Serial.println(bestAngle);
+    } else {
+        Serial.println("No valid direction found.");
+    }
 }
 
 // Alignment function
@@ -119,9 +169,20 @@ void moveForwardDistance(int cm) {
     // In a real implementation, this would involve wheel encoders or timing
 }
 
+// turn x amount of degrees
 void turnDegrees(int degrees) {
-    // Placeholder for turning a specific number of degrees
-    // In a real implementation, this would involve controlling the wheels to turn the robot
+    for (int i = 0; i < abs(degrees) / 10; i++) {
+        if (degrees > 0) { // turn right
+            leftWheel.write(LEFT_STOP + DRIVE_DELTA);
+            rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
+        } else { // turn left
+            leftWheel.write(LEFT_STOP - DRIVE_DELTA);
+            rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
+        }
+        delay(ANGLE_DELTA);
+    }
+    stopWheels();
+    delay(200);
 }
 
 void stopWheels() {
@@ -171,32 +232,33 @@ void setup() {
 void Algorithm1Loop() {
     switch (currentState) {
         case SCAN:
+            Serial.println("Scanning...");
             performScan();
             currentState = SELECT_DIRECTION;
-            Serial.println("Scanning...");
             break;
 
         case SELECT_DIRECTION:
-            //selectBestDirection();
-            currentState = ALIGN;
             Serial.println("Selecting direction...");
+            selectBestDirection();
+            //currentState = ALIGN;
+            currentState = AVOID_STOP;
             break;
 
         case ALIGN:
+            Serial.println("Aligning...");
             //alignToBestDirection();
             currentState = MOVE_FORWARD;
-            Serial.println("Aligning...");
             break;
 
         case MOVE_FORWARD:
-            moveForward();
             Serial.println("Moving forward...");
+            moveForward();
             break;
 
         case AVOID_STOP:
-            stopWheels();
-            currentState = SCAN;
             Serial.println("Obstacle detected, stopping...");
+            stopWheels();
+            //currentState = SCAN;
             break;
     }
 }
@@ -214,13 +276,15 @@ void loop() {
             Serial.print("Distance: ");
             Serial.println(distance);
         }
-        //Algorithm2Loop();
+        performScan();
+        delay(5000);
+        /*Algorithm2Loop();
         if (distance > 0 && distance < OBSTACLE_CM) {
             stopWheels();
-            turn90right();
+            turnDegrees(90); // turn right on obstacle
         } else {
             moveForward();
-        }
+        }*/
     }
     delay(60); // small delay to avoid sonar spam
 }
