@@ -14,7 +14,7 @@
 #define OBSTACLE_CM 25 // stop if object closer than this
 #define SCAN_ANGLE 45 // degrees to turn per scan step
 #define SCAN_STEPS 8 // number of scan steps (360/45)
-#define ANGLE_DELTA 66 // delay per 10 degrees turn
+#define ANGLE_DELTA 63 // delay per 10 degrees turn
 
 enum Mode {
     ALGORITHM1,
@@ -37,6 +37,7 @@ Servo leftWheel;
 Servo rightWheel;
 State currentState = SCAN;
 Mode mode = ALGORITHM1; // select mode here
+
 
 // HC-SR04 Ultrasonic distance sensor reading
 long readDistanceCM() {
@@ -276,15 +277,36 @@ void loop() {
             Serial.print("Distance: ");
             Serial.println(distance);
         }
-        performScan();
-        delay(5000);
-        /*Algorithm2Loop();
+        //performScan();
+        //delay(5000);
+        //Algorithm2Loop();
+        static int consecutiveObstacles = 0;
+
         if (distance > 0 && distance < OBSTACLE_CM) {
             stopWheels();
+            consecutiveObstacles++;
+
+            if (consecutiveObstacles >= 3) {
+            Serial.println("3 obstacles detected, reversing and scanning...");
+            // Reverse
+            leftWheel.write(LEFT_STOP - DRIVE_DELTA);
+            rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
+            delay(1000); // reverse for 1 second
+            stopWheels();
+            delay(200);
+
+            // Perform full scan
+            performScan();
+            selectBestDirection();
+
+            consecutiveObstacles = 0; // reset counter
+            } else {
             turnDegrees(90); // turn right on obstacle
+            }
         } else {
             moveForward();
-        }*/
+            consecutiveObstacles = 0; // reset counter when path is clear
+        }
     }
-    delay(60); // small delay to avoid sonar spam
+    delay(50); // small delay to avoid sonar spam
 }
