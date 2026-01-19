@@ -1,82 +1,18 @@
-// Puck Spinner
-// Goal:
-// Make a two-wheeled robot escape from a closed arena by moving toward the direction with the greatest open space while avoiding nearby obstacles using a single ultrasonic distance sensor.
-
-// Principle:
-// The robot periodically performs a 180° (or 360°) scan of its surroundings by rotating in place while taking distance measurements at several defined angles. The direction with the largest measured obstacle-free distance is selected as the next heading.
-
-// 🔄 Core Behavior
-// Scanning phase
-// Stop the robot.
-// Rotate in small increments.
-// At each step, measure distance with the ultrasonic sensor.
-// Store all distance readings in a small array (polar scan).
-// When scanning is complete, find the angle with the largest distance.
-// Decision phase
-// Compare the highest measured distance to a safety threshold.
-// If the “best direction” is sufficiently open → choose it.
-// If all directions are too close → rotate randomly and rescan.
-
-// Movement phase
-// Turn the robot toward the selected direction.
-// Move forward while the distance ahead remains > threshold.
-// If an obstacle is detected during movement → stop + return to scanning phase.
-// Repeat, enabling continuous exploration until an exit is found.
-
-// 📌 Data Representation
-// scanAngles[] → list of scanned angles (8–16 values)
-// scanDistances[] → distance for each angle
-// bestIndex → index of the maximum distance
-// bestAngle → angle to face before movement
-
-
-// | State              | Description                                     |
-// | ------------------ | ----------------------------------------------- |
-// | `SCAN`             | Take multiple ultrasonic samples while rotating |
-// | `SELECT_DIRECTION` | Identify the angle with max distance            |
-// | `ALIGN`            | Turn robot to face that direction               |
-// | `MOVE_FORWARD`     | Drive ahead until obstacle threshold            |
-// | `AVOID/STOP`       | Obstacle too close → back to `SCAN`             |
-
-#include <NewPing.h>
-#include <Servo.h>
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_MotorShield.h>
-#include "utility/Adafruit_MS_PWMServoDriver.h"
-#include <SPI.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BNO055.h>
-#include <utility/imumaths.h>
-#include <EEPROM.h>
+#include <Servo.h>
 
-// Motor setup
-Adafruit_MotorShield AFMS = Adafruit_MotorShield();
-Adafruit_DCMotor *leftMotor = AFMS.getMotor(1);
-Adafruit_DCMotor *rightMotor = AFMS.getMotor(2);
+#define LEFT_SERVO_PIN   5
+#define RIGHT_SERVO_PIN  6
+#define TRIG_PIN         9
+#define ECHO_PIN         10
 
-// Ultrasonic sensor setup
-#define TRIGGER_PIN  9
-#define ECHO_PIN     10
-#define MAX_DISTANCE 200
+#define LEFT_STOP   1418
+#define RIGHT_STOP  1512
 
-NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
-Servo servoMotor;
+#define DRIVE_DELTA 500
 
-#define SERVO_MIN_ANGLE 0
-#define SERVO_MAX_ANGLE 180
-#define SERVO_STEP_ANGLE 20
-#define SCAN_ANGLES_COUNT ((SERVO_MAX_ANGLE - SERVO_MIN_ANGLE) / SERVO_STEP_ANGLE + 1)
-
-int scanAngles[SCAN_ANGLES_COUNT];
-int scanDistances[SCAN_ANGLES_COUNT];
-int bestIndex = -1;
-int bestAngle = 0;
-
-#define OBSTACLE_THRESHOLD 30 // in cm
-#define FORWARD_SPEED 150
-#define TURN_SPEED 100
-#define SCAN_DELAY 100 // milliseconds
+#define OBSTACLE_CM 25 // stop if object closer than this
+#define ALGORITHM false // true = Algo 1, false = Algo 2
 
 enum State {
     SCAN,
@@ -86,103 +22,185 @@ enum State {
     AVOID_STOP
 };
 
+Servo leftWheel;
+Servo rightWheel;
 State currentState = SCAN;
-unsigned long stateStartTime = 0;
+
+// HC-SR04 Ultrasonic distance sensor reading
+long readDistanceCM() {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(5);
+
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    unsigned long dur = pulseIn(ECHO_PIN, HIGH, 30000UL);
+    if (dur == 0) return -1;
+
+    long cm = (long)(dur * 0.0343f / 2.0f);
+
+    return cm;
+}
+
+long readDistanceCM_filtered() {
+  const int N = 5;
+  long v[N];
+  int k = 0;
+
+  for (int i = 0; i < N; i++) {
+    long d = readDistanceCM();
+    if (d > 0) v[k++] = d;
+    delay(10);
+  }
+
+  if (k == 0) return -1;
+
+  for (int i = 0; i < k - 1; i++)
+    for (int j = i + 1; j < k; j++)
+      if (v[j] < v[i]) { long t = v[i]; v[i] = v[j]; v[j] = t; }
+
+  return v[k / 2]; // median
+}
+
+long getDistanceStable() {
+  static long lastGood = -1;
+  static unsigned long lastGoodMs = 0;
+
+  long d = readDistanceCM_filtered();
+  if (d > 0) {
+    lastGood = d;
+    lastGoodMs = millis();
+    return d;
+  }
+
+  // If we had a good reading recently, reuse it
+  if (lastGood > 0 && (millis() - lastGoodMs) < 300) {
+    return lastGood;
+  }
+
+  return -1;
+}
+
+
+// Scanning function
+void performScan() {
+    // Placeholder for scanning logic
+    // In a real implementation, this would rotate the robot and take distance measurements
+}
+
+// Direction selection function
+void selectBestDirection() {
+    // Placeholder for direction selection logic
+    // In a real implementation, this would analyze scan data to choose the best path
+}
+
+// Alignment function
+void alignToBestDirection() {
+    // Placeholder for alignment logic
+    // In a real implementation, this would rotate the robot to face the chosen direction
+}
+
+// move a certain distance forward
+void moveForwardDistance(int cm) {
+    // Placeholder for moving forward a specific distance
+    // In a real implementation, this would involve wheel encoders or timing
+}
+
+
+void stopWheels() {
+    leftWheel.write(LEFT_STOP);
+    rightWheel.write(RIGHT_STOP);
+}
+
+void moveForward() {
+    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
+    rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
+}
+
+void turn90right() {
+    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
+    rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
+    delay(600); // adjust this delay for a proper 90 degree turn
+    stopWheels();
+    delay(200);
+}
 
 void setup() {
     Serial.begin(9600);
-    AFMS.begin();
-    servoMotor.attach(6);
 
-    // Initialize scan angles
-    for (int i = 0; i < SCAN_ANGLES_COUNT; i++) {
-      scanAngles[i] = SERVO_MIN_ANGLE + i * SERVO_STEP_ANGLE;
+    pinMode(TRIG_PIN, OUTPUT);
+    pinMode(ECHO_PIN, INPUT);
+    digitalWrite(TRIG_PIN, LOW);
+
+    leftWheel.attach(LEFT_SERVO_PIN);
+    rightWheel.attach(RIGHT_SERVO_PIN);
+
+    Serial.println("Initialisation done.");
+    Serial.println("Selected mode :");
+
+    if (true) {
+        Serial.println(" - Puck Spinner Robot");
+    } else {
+        Serial.println(" - Unknown mode!");
     }
 }
 
-void loop() {
+// Algo 1 main loop
+void Algorithm1Loop() {
     switch (currentState) {
         case SCAN:
-            performScan();
+            //performScan();
             currentState = SELECT_DIRECTION;
+            Serial.println("Scanning...");
             break;
 
         case SELECT_DIRECTION:
-            selectBestDirection();
+            //selectBestDirection();
             currentState = ALIGN;
+            Serial.println("Selecting direction...");
             break;
 
         case ALIGN:
-            alignToBestDirection();
+            //alignToBestDirection();
             currentState = MOVE_FORWARD;
+            Serial.println("Aligning...");
             break;
 
         case MOVE_FORWARD:
             moveForward();
+            Serial.println("Moving forward...");
             break;
 
         case AVOID_STOP:
-            stopMovement();
+            stopWheels();
             currentState = SCAN;
+            Serial.println("Obstacle detected, stopping...");
             break;
     }
 }
 
-void performScan() {
-    for (int i = 0; i < SCAN_ANGLES_COUNT; i++) {
-        servoMotor.write(scanAngles[i]);
-        delay(300); // Allow time for servo to reach position
-        scanDistances[i] = sonar.ping_cm();
-        delay(SCAN_DELAY);
-    }
-}
-
-void selectBestDirection() {
-    bestIndex = -1;
-    int maxDistance = -1;
-
-    for (int i = 0; i < SCAN_ANGLES_COUNT; i++) {
-        if (scanDistances[i] > maxDistance) {
-            maxDistance = scanDistances[i];
-            bestIndex = i;
-        }
-    }
-
-    if (bestIndex != -1) {
-        bestAngle = scanAngles[bestIndex];
-    }
-}
-
-void alignToBestDirection() {
-    int turnAngle = bestAngle - 90; // Assuming 90 is straight ahead
-    if (turnAngle > 0) {
-        // Turn right
-        leftMotor->setSpeed(TURN_SPEED);
-        rightMotor->setSpeed(0);
+void loop() {
+    if (ALGORITHM) {
+        Algorithm1Loop();
     } else {
-        // Turn left
-        leftMotor->setSpeed(0);
-        rightMotor->setSpeed(TURN_SPEED);
-    }
-    delay(abs(turnAngle) * 10); // Simple proportional delay for turning
-    stopMovement();
-}
+        static unsigned long lastPing = 0;
 
-void moveForward() {
-    leftMotor->setSpeed(FORWARD_SPEED);
-    rightMotor->setSpeed(FORWARD_SPEED);
-
-    while (true) {
-        int distance = sonar.ping_cm();
-        if (distance > 0 && distance < OBSTACLE_THRESHOLD) {
-            currentState = AVOID_STOP;
-            break;
+        static long distance = 0;
+        if (millis() - lastPing >= 60) {
+            lastPing = millis();
+            distance = getDistanceStable();
+            Serial.print("Distance: ");
+            Serial.println(distance);
         }
-        delay(100);
-    }
-}
 
-void stopMovement() {
-    leftMotor->setSpeed(0);
-    rightMotor->setSpeed(0);
+        //Algorithm2Loop();
+        if (distance > 0 && distance < OBSTACLE_CM) {
+            stopWheels();
+            turn90right();
+        } else {
+            moveForward();
+        }
+    }
+    delay(60); // small delay to avoid sonar spam
 }
