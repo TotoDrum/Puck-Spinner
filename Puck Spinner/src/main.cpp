@@ -61,42 +61,47 @@ long readDistanceCM() {
 }
 
 long readDistanceCM_filtered() {
-  const int N = 5;
-  long v[N];
-  int k = 0;
+    const int N = 5;
+    long v[N];
+    int k = 0;
 
-  for (int i = 0; i < N; i++) {
-    long d = readDistanceCM();
-    if (d > 0) v[k++] = d;
-    delay(10);
-  }
+    for (int i = 0; i < N; i++) {
+        long d = readDistanceCM();
+        if (d > 0) v[k++] = d;
+        delay(10);
+    }
 
-  if (k == 0) return -1;
+    if (k == 0)
+        return -1;
 
-  for (int i = 0; i < k - 1; i++)
-    for (int j = i + 1; j < k; j++)
-      if (v[j] < v[i]) { long t = v[i]; v[i] = v[j]; v[j] = t; }
-
-  return v[k / 2]; // median
+    for (int i = 0; i < k - 1; i++) {
+        for (int j = i + 1; j < k; j++) {
+            if (v[j] < v[i]) {
+                long t = v[i];
+                v[i] = v[j];
+                v[j] = t;
+            }
+        }
+    }
+    return v[k / 2]; // median
 }
 
 long getDistanceStable() {
-  static long lastGood = -1;
-  static unsigned long lastGoodMs = 0;
+    static long lastGood = -1;
+    static unsigned long lastGoodMs = 0;
 
-  long d = readDistanceCM_filtered();
-  if (d > 0) {
-    lastGood = d;
-    lastGoodMs = millis();
-    return d;
-  }
+    long d = readDistanceCM_filtered();
+    if (d > 0) {
+        lastGood = d;
+        lastGoodMs = millis();
+        return d;
+    }
 
-  // If we had a good reading recently, reuse it
-  if (lastGood > 0 && (millis() - lastGoodMs) < 300) {
-    return lastGood;
-  }
+    if (lastGood > 0 && (millis() - lastGoodMs) < 300) {
+        return lastGood;
+    }
 
-  return -1;
+    return -1;
 }
 
 int getAverageDistance() {
