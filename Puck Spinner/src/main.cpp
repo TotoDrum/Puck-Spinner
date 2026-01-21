@@ -15,6 +15,7 @@
 #define SCAN_ANGLE 45 // degrees to turn per scan step
 #define SCAN_STEPS 8 // number of scan steps (360/45)
 #define ANGLE_DELTA 63 // delay per 10 degrees turn
+#define DISTANCE_DELTA 100 // milliseconds per cm, <<to be calibrated>>
 
 enum Mode {
     ALGORITHM1,
@@ -158,6 +159,16 @@ void selectBestDirection() {
     }
 }
 
+// move a certain distance forward
+void moveForwardDistance(int cm) {
+    int timePerCm = DISTANCE_DELTA;
+
+    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
+    rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
+    delay(cm * timePerCm);
+    stopWheels();
+}
+
 // Alignment function
 void alignToBestDirection() {
     // Placeholder for alignment logic
@@ -207,10 +218,12 @@ void turn90right() {
 void setup() {
     Serial.begin(9600);
 
+    // HC-RO4 setup
     pinMode(TRIG_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
     digitalWrite(TRIG_PIN, LOW);
 
+    // Switch setup
     pinMode(SWITCH_PIN, INPUT_PULLUP);
 
     leftWheel.attach(LEFT_SERVO_PIN);
@@ -264,27 +277,22 @@ void Algorithm1Loop() {
     }
 }
 
-void loop() {
-    if (mode == ALGORITHM1) {
-        Algorithm1Loop();
-    } else if (mode == ALGORITHM2) {
-        static unsigned long lastPing = 0;
+void Algorithm2Loop() {
+    static unsigned long lastPing = 0;
+    static long distance = 0;
 
-        static long distance = 0;
-        if (millis() - lastPing >= 60) {
-            lastPing = millis();
-            distance = getDistanceStable();
-            Serial.print("Distance: ");
-            Serial.println(distance);
-        }
-        //performScan();
-        //delay(5000);
-        //Algorithm2Loop();
-        static int consecutiveObstacles = 0;
+    if (millis() - lastPing >= 60) {
+        lastPing = millis();
+        distance = getDistanceStable();
+        Serial.print("Distance: ");
+        Serial.println(distance);
+    }
 
-        if (distance > 0 && distance < OBSTACLE_CM) {
-            stopWheels();
-            consecutiveObstacles++;
+    static int consecutiveObstacles = 0;
+
+    if (distance > 0 && distance < OBSTACLE_CM) {
+        stopWheels();
+        consecutiveObstacles++;
 
             if (consecutiveObstacles >= 3) {
             Serial.println("3 obstacles detected, reversing and scanning...");
@@ -300,13 +308,19 @@ void loop() {
             selectBestDirection();
 
             consecutiveObstacles = 0; // reset counter
-            } else {
-            turnDegrees(90); // turn right on obstacle
-            }
         } else {
-            moveForward();
-            consecutiveObstacles = 0; // reset counter when path is clear
+            turnDegrees(90); // turn right on obstacle
         }
+    } else {
+        moveForward();
+        consecutiveObstacles = 0; // reset counter when path is clear
     }
-    delay(50); // small delay to avoid sonar spam
+}
+
+void loop() {
+    if (mode == ALGORITHM1) {
+        Algorithm1Loop();
+    } else if (mode == ALGORITHM2) {
+        Algorithm2Loop();
+    }
 }
