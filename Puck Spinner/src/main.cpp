@@ -146,6 +146,35 @@ void performScan() {
     }
 }
 
+void quick_scan() {
+    long distance = 0;
+
+    stopWheels();
+    for (int i = 0; i < SCAN_STEPS; i+=2) {
+        turnDegrees(SCAN_ANGLE * 2);
+        distance = getAverageDistance();
+        distances[i] = distance;
+        Serial.print("Angle: ");
+        Serial.println((i - SCAN_STEPS / 2) * SCAN_ANGLE);
+        Serial.print("Distance: ");
+        Serial.println(distance);
+        stopWheels();
+    }
+
+    for (int i = 1; i < SCAN_STEPS; i+=2) {
+        distances[i] = -1;
+    }
+
+    Serial.println("Quick scan complete.");
+    // print all values
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        Serial.print("Angle ");
+        Serial.print((i - SCAN_STEPS / 2) * SCAN_ANGLE);
+        Serial.print(": ");
+        Serial.println(distances[i]);
+    }
+}
+
 // Direction selection function
 void selectBestDirection() {
     int bestIndex = -1;
@@ -256,8 +285,8 @@ void setup() {
         mode = ALGORITHM1;
         Serial.println("Algorithm 1");
     } else {
-        mode = ALGORITHM2;
-        Serial.println("Algorithm 2");
+        mode = CALIBRATION;
+        Serial.println("Calibration Mode");
     }
 }
 
@@ -272,7 +301,7 @@ void Algorithm1Loop() {
 
         case QUICK_SCAN:
             Serial.println("Quick scanning...");
-            // Implement quick scan if needed
+            quick_scan();
             currentState = SELECT_DIRECTION;
             break;
 
@@ -347,5 +376,7 @@ void loop() {
         Algorithm1Loop();
     } else if (mode == ALGORITHM2) {
         Algorithm2Loop();
+    } else if (mode == CALIBRATION) {
+        stopWheels();
     }
 }
