@@ -25,6 +25,7 @@ enum Mode {
 
 enum State {
     SCAN,
+    QUICK_SCAN,
     SELECT_DIRECTION,
     ALIGN,
     MOVE_FORWARD,
@@ -33,6 +34,8 @@ enum State {
 
 // Global array for storing distances at different angles
 long distances[SCAN_STEPS]; // from 180 to -180 in steps of SCAN_ANGLE
+long bestAngle = -1;
+long bestDistance = -1;
 
 Servo leftWheel;
 Servo rightWheel;
@@ -151,7 +154,8 @@ void selectBestDirection() {
     }
 
     if (bestIndex != -1) {
-        int bestAngle = (bestIndex - SCAN_STEPS / 2) * SCAN_ANGLE;
+        bestAngle = (bestIndex - SCAN_STEPS / 2) * SCAN_ANGLE;
+        bestDistance = maxDistance;
         Serial.print("Best angle selected: ");
         Serial.println(bestAngle);
     } else {
@@ -171,14 +175,24 @@ void moveForwardDistance(int cm) {
 
 // Alignment function
 void alignToBestDirection() {
-    // Placeholder for alignment logic
-    // In a real implementation, this would rotate the robot to face the chosen direction
-}
+    int bestIndex = -1;
+    long maxDistance = -1;
 
-// move a certain distance forward
-void moveForwardDistance(int cm) {
-    // Placeholder for moving forward a specific distance
-    // In a real implementation, this would involve wheel encoders or timing
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        if (distances[i] > maxDistance) {
+            maxDistance = distances[i];
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex != -1) {
+        int bestAngle = (bestIndex - SCAN_STEPS / 2) * SCAN_ANGLE;
+        Serial.print("Aligning to best angle: ");
+        Serial.println(bestAngle);
+        turnDegrees(bestAngle);
+    } else {
+        Serial.println("No valid direction to align.");
+    }
 }
 
 // turn x amount of degrees
@@ -251,6 +265,12 @@ void Algorithm1Loop() {
             currentState = SELECT_DIRECTION;
             break;
 
+        case QUICK_SCAN:
+            Serial.println("Quick scanning...");
+            // Implement quick scan if needed
+            currentState = SELECT_DIRECTION;
+            break;
+
         case SELECT_DIRECTION:
             Serial.println("Selecting direction...");
             selectBestDirection();
@@ -260,19 +280,19 @@ void Algorithm1Loop() {
 
         case ALIGN:
             Serial.println("Aligning...");
-            //alignToBestDirection();
+            alignToBestDirection();
             currentState = MOVE_FORWARD;
             break;
 
         case MOVE_FORWARD:
             Serial.println("Moving forward...");
-            moveForward();
+            moveForwardDistance(bestDistance); // move forward 30 cm
             break;
 
         case AVOID_STOP:
             Serial.println("Obstacle detected, stopping...");
             stopWheels();
-            //currentState = SCAN;
+            currentState = SCAN;
             break;
     }
 }
@@ -294,7 +314,7 @@ void Algorithm2Loop() {
         stopWheels();
         consecutiveObstacles++;
 
-            if (consecutiveObstacles >= 3) {
+        if (consecutiveObstacles >= 3) {
             Serial.println("3 obstacles detected, reversing and scanning...");
             // Reverse
             leftWheel.write(LEFT_STOP - DRIVE_DELTA);
