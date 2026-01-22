@@ -15,6 +15,7 @@
 #define SCAN_ANGLE 45 // degrees to turn per scan step
 #define SCAN_STEPS 8 // number of scan steps (360/45)
 #define DISTANCE_DELTA 20 // milliseconds per cm, <<to be calibrated>>
+#define SCAN_FORWARD_INDEX 0  // we'll tune this: 0..7
 
 // Tunables (start here, then calibrate)
 #define TURN_FAST_DELTA   600   // keep your current speed
@@ -60,12 +61,12 @@ void setMotion(MotionState m) {
 }
 
 enum Algo2State {
-  A2_FORWARD,
-  A2_TURN_90,
-  A2_BACKUP,
-  A2_SCAN,
-  A2_TURN_TO_BEST,
-  A2_RECOVER_FORWARD
+    A2_FORWARD,
+    A2_TURN_90,
+    A2_BACKUP,
+    A2_SCAN,
+    A2_TURN_TO_BEST,
+    A2_RECOVER_FORWARD
 };
 
 
@@ -192,36 +193,44 @@ bool distanceUsable() {
     if (motion == TURNING) return false;
     return true;
 }
-
 void debugDistance() {
-  Serial.print("Dist: ");
-  Serial.print(dist.cm);
-  Serial.print(" cm  valid=");
-  Serial.print(dist.valid);
-  Serial.print(" age=");
-  Serial.println(millis() - dist.lastMs);
+    Serial.print("Dist: ");
+    Serial.print(dist.cm);
+    Serial.print(" cm  valid=");
+    Serial.print(dist.valid);
+    Serial.print(" age=");
+    Serial.println(millis() - dist.lastMs);
 }
 
 // Scanning function
 void performScan() {
-    long distance = 0;
-
     stopWheels();
+    delay(80);
+
+    // Scan absolute headings in a continuous sweep: 0,45,90,...,315
     for (int i = 0; i < SCAN_STEPS; i++) {
-        turnDegrees(SCAN_ANGLE);
-        distance = getAverageDistance();
-        distances[i] = distance;
-        debugDistance();
-        stopWheels();
+        if (i > 0) {
+            setMotion(TURNING);
+            turnDegrees(SCAN_ANGLE);   // always turn the same way
+            setMotion(STOPPED);
+            delay(80);                 // settle after turning
+        }
+
+        long d = getAverageDistance(); // keep using your averaging function
+        distances[i] = d;
+
+        Serial.print("Scan abs ");
+        Serial.print(i * SCAN_ANGLE);
+        Serial.print(" => ");
+        Serial.println(d);
     }
-    Serial.println("Scan complete.");
-    // print all values
-    for (int i = 0; i < SCAN_STEPS; i++) {
-        Serial.print("Angle ");
-        Serial.print((i - SCAN_STEPS / 2) * SCAN_ANGLE);
-        Serial.print(": ");
-        Serial.println(distances[i]);
-    }
+
+    // Complete the full circle back to forward (adds last 45°: 315->360/0)
+    setMotion(TURNING);
+    turnDegrees(SCAN_ANGLE);
+    setMotion(STOPPED);
+
+    Serial.println("Scan complete (360).");
 }
 
 void quick_scan() {
@@ -249,38 +258,69 @@ void quick_scan() {
         Serial.println(distances[i]);
     }
 }
-
-// Direction selection function
 void selectBestDirection() {
-    int bestIndex = -1;
-    long maxDistance = -1;
+    bestAngle = 180;      // safe fallback
+    bestDistance = -1;
+
+    // We want at least some clearance beyond OBSTACLE_CM
+    const long MIN_CLEAR = OBSTACLE_CM + 10;
+
+    long bestFrontDist = -1;
+    int bestFrontRelAngle = 0;
+
+    long bestAnyDist = -1;
+    int bestAnyRelAngle = 180;
 
     for (int i = 0; i < SCAN_STEPS; i++) {
-        if (distances[i] > maxDistance) {
-            maxDistance = distances[i];
-            bestIndex = i;
+        long d = distances[i];
+        if (d <= 0) continue;
+
+        int absA = ((i - SCAN_FORWARD_INDEX + SCAN_STEPS) % SCAN_STEPS) * SCAN_ANGLE;
+        int relA = (absA <= 180) ? absA : absA - 360;
+
+
+        // Track best anywhere (as fallback)
+        if (d > bestAnyDist) {
+            bestAnyDist = d;
+            bestAnyRelAngle = relA;
+        }
+
+        // Prefer front hemisphere and enforce minimum clearance
+        if (abs(relA) <= 60 && d >= MIN_CLEAR) {
+            // primary: max distance; secondary: closer to straight ahead
+            if (d > bestFrontDist || (d == bestFrontDist && abs(relA) < abs(bestFrontRelAngle))) {
+                bestFrontDist = d;
+                bestFrontRelAngle = relA;
+            }
         }
     }
 
-    if (bestIndex != -1) {
-        bestAngle = (bestIndex - SCAN_STEPS / 2) * SCAN_ANGLE;
-        bestDistance = maxDistance;
-        Serial.print("Best angle selected: ");
-        Serial.println(bestAngle);
+    if (bestFrontDist > 0) {
+        bestAngle = bestFrontRelAngle;
+        bestDistance = bestFrontDist;
+        Serial.print("Best FRONT angle: ");
+        Serial.print(bestAngle);
+        Serial.print("  dist=");
+        Serial.println(bestDistance);
+        return;
+    }
+
+    // If nothing safe in front, pick best anywhere IF it's at least valid,
+    // otherwise keep fallback 180.
+    if (bestAnyDist > 0) {
+        bestAngle = bestAnyRelAngle;
+        bestDistance = bestAnyDist;
+        Serial.print("Best ANY angle: ");
+        Serial.print(bestAngle);
+        Serial.print("  dist=");
+        Serial.println(bestDistance);
     } else {
-        Serial.println("No valid direction found.");
+        Serial.println("No valid direction found -> fallback 180");
+        bestAngle = 180;
+        bestDistance = -1;
     }
 }
 
-// move a certain distance forward
-void moveForwardDistance(int cm) {
-    int timePerCm = DISTANCE_DELTA;
-
-    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
-    rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
-    delay(cm * timePerCm);
-    stopWheels();
-}
 
 // Alignment function
 void alignToBestDirection() {
@@ -394,8 +434,8 @@ void setup() {
 
     // select mode based on switch
     if (digitalRead(SWITCH_PIN) == LOW) {
-        mode = ALGORITHM1;
-        Serial.println("Algorithm 1");
+        mode = CALIBRATION;
+        Serial.println("Calibration");
     } else {
         mode = ALGORITHM2;
         Serial.println("Algorithm 2");
@@ -409,81 +449,390 @@ void Algorithm1Loop() {
     switch (currentState) {
         case SCAN:
             Serial.println("Scanning...");
-            performScan();
+            // performScan();
             currentState = SELECT_DIRECTION;
             break;
 
         case QUICK_SCAN:
             Serial.println("Quick scanning...");
-            quick_scan();
+            //quick_scan();
             currentState = SELECT_DIRECTION;
             break;
 
         case SELECT_DIRECTION:
             Serial.println("Selecting direction...");
-            selectBestDirection();
-            //currentState = ALIGN;
-            currentState = AVOID_STOP;
+            //selectBestDirection();
+            currentState = ALIGN;
             break;
 
         case ALIGN:
             Serial.println("Aligning...");
-            alignToBestDirection();
+            //alignToBestDirection();
             currentState = MOVE_FORWARD;
             break;
 
         case MOVE_FORWARD:
             Serial.println("Moving forward...");
-            moveForwardDistance(bestDistance); // move forward 30 cm
+            //moveForwardDistance(bestDistance);
             break;
 
         case AVOID_STOP:
             Serial.println("Obstacle detected, stopping...");
             stopWheels();
-            currentState = SCAN;
+            currentState = QUICK_SCAN;
             break;
     }
 }*/
 
 void Algorithm2Loop() {
-    static unsigned long lastPing = 0;
-    static long distance = 0;
+    updateDistance();
 
-    if (millis() - lastPing >= 60) {
-        lastPing = millis();
-        distance = getDistanceStable();
-        Serial.print("Distance: ");
-        Serial.println(distance);
-    }
+    // ----------------- Tunables -----------------
+    const int  EMERGENCY_CM        = 5;
+    const int  OBSTACLE_ENTER_CM   = OBSTACLE_CM;
+    const int  OBSTACLE_EXIT_CM    = OBSTACLE_CM + 10;
+    const int  OBSTACLE_HITS_REQ   = 3;
 
-    static int consecutiveObstacles = 0;
+    const unsigned long DIST_MAX_AGE_MS = 200;
+    const unsigned long FWD_STABLE_MS   = 250;
 
-    if (distance > 0 && distance < OBSTACLE_CM) {
-        stopWheels();
-        consecutiveObstacles++;
+    const unsigned long SCAN_COOLDOWN_MS = 5000;
+    const unsigned long OBST_WINDOW_MS   = 2500;
+    const int  OBST_IN_WINDOW_REQ = 5;
 
-        if (consecutiveObstacles >= 3) {
-            Serial.println("3 obstacles detected, reversing and scanning...");
-            // Reverse
-            leftWheel.write(LEFT_STOP - DRIVE_DELTA);
-            rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
-            delay(1000); // reverse for 1 second
-            stopWheels();
-            delay(200);
+    const unsigned long BACKUP_MS = 700;
+    const unsigned long RECOVER_FWD_MS = 250;
+    const unsigned long SETTLE_AFTER_TURN_MS = 100;
 
-            // Perform full scan
-            performScan();
-            selectBestDirection();
+    const int  AVOID_TURN_DEG = 45;
+    const unsigned long STUCK_TIMEOUT_MS = 1700;
 
-            consecutiveObstacles = 0; // reset counter
+    // ----------------- State machine -----------------
+    enum Algo2State {
+        A2_FORWARD,
+        A2_AVOID_TURN,
+        A2_BACKUP,
+        A2_SCAN,
+        A2_TURN_TO_BEST,
+        A2_RECOVER_FORWARD
+    };
+
+    static Algo2State st = A2_FORWARD;
+    static unsigned long stateStartMs = 0;
+
+    auto enter = [&](Algo2State next) {
+        st = next;
+        stateStartMs = millis();
+    };
+    auto inStateMs = [&]() -> unsigned long { return millis() - stateStartMs; };
+
+    // ----------------- Fresh + forwardStable gating -----------------
+    bool fresh = dist.valid && (millis() - dist.lastMs) < DIST_MAX_AGE_MS;
+    bool forwardStable = (motion == MOVING_FWD) && (millis() - motionChangedMs) > FWD_STABLE_MS;
+
+    long d = (fresh ? dist.cm : -1);
+
+    // ----------------- Emergency detection (HARD rule) -----------------
+    bool emergency = (fresh && forwardStable && d > 0 && d <= EMERGENCY_CM);
+
+    // ----------------- Soft obstacle latch (persistence + hysteresis) -----------------
+    static int  obstacleHits = 0;
+    static bool obstacleLatched = false;
+
+    if (fresh && forwardStable) {
+        if (!obstacleLatched) {
+            if (d > 0 && d <= OBSTACLE_ENTER_CM) obstacleHits++;
+            else obstacleHits = 0;
+
+            if (obstacleHits >= OBSTACLE_HITS_REQ) {
+                obstacleLatched = true;
+                obstacleHits = 0;
+            }
         } else {
-            turnDegrees(90); // turn right on obstacle
+            if (d >= OBSTACLE_EXIT_CM) obstacleLatched = false;
         }
     } else {
-        moveForward();
-        consecutiveObstacles = 0; // reset counter when path is clear
+        obstacleHits = 0;
+    }
+
+    bool obstacle = obstacleLatched;
+
+    // ----------------- Circling detector -----------------
+    static unsigned long windowStartMs = 0;
+    static int obstaclesInWindow = 0;
+
+    auto noteObstacleEvent = [&]() {
+        unsigned long now = millis();
+        if (now - windowStartMs > OBST_WINDOW_MS) {
+            windowStartMs = now;
+            obstaclesInWindow = 0;
+        }
+        obstaclesInWindow++;
+    };
+
+    // ----------------- Stuck detector (only when near something) -----------------
+    static long lastCm = -1;
+    static unsigned long lastProgressMs = 0;
+
+    if (st == A2_FORWARD && fresh && forwardStable) {
+        if (d > 0 && d < 80) {
+            if (lastCm < 0) {
+                lastCm = d;
+                lastProgressMs = millis();
+            } else if (abs(d - lastCm) >= 2) {
+                lastProgressMs = millis();
+                lastCm = d;
+            }
+        } else {
+            lastCm = -1;
+            lastProgressMs = millis();
+        }
+    }
+
+    bool stuck = (st == A2_FORWARD) && (millis() - lastProgressMs > STUCK_TIMEOUT_MS);
+
+    // ----------------- Scan cooldown -----------------
+    static unsigned long lastScanMs = 0;
+    bool canScan = (millis() - lastScanMs) > SCAN_COOLDOWN_MS;
+    bool shouldScan = canScan && (stuck || obstaclesInWindow >= OBST_IN_WINDOW_REQ);
+
+    // ----------------- Main behavior -----------------
+    switch (st) {
+        case A2_FORWARD: {
+            setMotion(MOVING_FWD);
+            moveForward();
+
+            if (emergency) {
+                stopWheels();
+                setMotion(STOPPED);
+                enter(A2_BACKUP);
+                break;
+            }
+
+            if (obstacle) {
+                stopWheels();
+                setMotion(STOPPED);
+                noteObstacleEvent();
+
+                if (shouldScan) enter(A2_SCAN);
+                else enter(A2_AVOID_TURN);
+                break;
+            }
+
+            if (stuck && canScan) {
+                stopWheels();
+                setMotion(STOPPED);
+                enter(A2_SCAN);
+                break;
+            }
+
+            break;
+        }
+
+        case A2_AVOID_TURN: {
+            static bool turnRight = true;
+
+            setMotion(TURNING);
+            turnDegrees(turnRight ? +AVOID_TURN_DEG : -AVOID_TURN_DEG);
+            setMotion(STOPPED);
+            delay(SETTLE_AFTER_TURN_MS);
+
+            updateDistance();
+            bool stillClose = (dist.valid && (millis() - dist.lastMs) < 250 && dist.cm > 0 && dist.cm <= OBSTACLE_ENTER_CM);
+            if (stillClose) turnRight = !turnRight;
+            else turnRight = !turnRight;
+
+            enter(A2_RECOVER_FORWARD);
+            break;
+        }
+
+        case A2_BACKUP: {
+            setMotion(REVERSING);
+            driveDelta(-DRIVE_DELTA);
+
+            if (inStateMs() >= BACKUP_MS) {
+                stopWheels();
+                setMotion(STOPPED);
+                enter(A2_SCAN);
+            }
+            break;
+        }
+
+        case A2_SCAN: {
+            stopWheels();
+            setMotion(STOPPED);
+            delay(120);
+
+            setMotion(TURNING);
+            performScan();
+            setMotion(STOPPED);
+
+            selectBestDirection();
+            lastScanMs = millis();
+
+            obstaclesInWindow = 0;
+            windowStartMs = millis();
+            lastCm = -1;
+            lastProgressMs = millis();
+
+            enter(A2_TURN_TO_BEST);
+            break;
+        }
+
+        case A2_TURN_TO_BEST: {
+            setMotion(TURNING);
+            turnDegrees((int)bestAngle);
+            setMotion(STOPPED);
+            delay(SETTLE_AFTER_TURN_MS);
+
+            enter(A2_RECOVER_FORWARD);
+            break;
+        }
+
+        case A2_RECOVER_FORWARD: {
+            setMotion(MOVING_FWD);
+            moveForward();
+
+            if (inStateMs() >= RECOVER_FWD_MS) {
+                stopWheels();
+                setMotion(STOPPED);
+
+                obstacleLatched = false;
+                obstacleHits = 0;
+
+                lastCm = -1;
+                lastProgressMs = millis();
+
+                enter(A2_FORWARD);
+            }
+            break;
+        }
     }
 }
+
+// -------------- DEBUGGING --------------
+void printCalMenu() {
+  Serial.println();
+  Serial.println("=== CALIBRATION MENU ===");
+  Serial.println("d  -> stream distance (stable)");
+  Serial.println("t  -> turn sign test (+45 then -45)");
+  Serial.println("q  -> square test (4x 90 degrees)");
+  Serial.println("s  -> scan only (print bins 0..315)");
+  Serial.println("b  -> scan + best direction (prints bestAngle)");
+  Serial.println("f  -> forward for 1s (check drift)");
+  Serial.println("x  -> stop wheels");
+  Serial.println("========================");
+}
+
+void calib_distance_stream() {
+  Serial.println("Distance stream (press any key to stop)...");
+  while (!Serial.available()) {
+    updateDistance();
+    if (dist.valid) {
+      Serial.print("cm=");
+      Serial.print(dist.cm);
+      Serial.print(" age=");
+      Serial.println(millis() - dist.lastMs);
+    } else {
+      Serial.println("cm=INVALID");
+    }
+    delay(120);
+  }
+  while (Serial.available()) Serial.read();
+}
+
+void calib_turn_sign_test() {
+  Serial.println("TURN SIGN TEST:");
+  Serial.println("Step 1: turnDegrees(+45). Robot should rotate RIGHT.");
+  setMotion(TURNING);
+  turnDegrees(+45);
+  setMotion(STOPPED);
+  delay(400);
+
+  Serial.println("Step 2: turnDegrees(-45). Robot should return to original heading.");
+  setMotion(TURNING);
+  turnDegrees(-45);
+  setMotion(STOPPED);
+
+  Serial.println("If it doesn't return, your sign convention is wrong OR timing isn't symmetric.");
+}
+
+void calib_square_test() {
+  Serial.println("SQUARE TEST: doing 4x 90 degrees. Should end near original heading.");
+  for (int i = 0; i < 4; i++) {
+    setMotion(TURNING);
+    turnDegrees(90);
+    setMotion(STOPPED);
+    delay(500);
+  }
+  Serial.println("Done. If it's drifting a lot, your turn scaling isn't linear or you're slipping.");
+}
+
+void calib_scan_only() {
+  Serial.println("SCAN ONLY TEST: place robot and do not touch it during scan.");
+  setMotion(TURNING);
+  performScan();
+  setMotion(STOPPED);
+
+  Serial.println("Scan bins:");
+  for (int i = 0; i < SCAN_STEPS; i++) {
+    Serial.print(i * SCAN_ANGLE);
+    Serial.print(": ");
+    Serial.println(distances[i]);
+  }
+}
+
+void calib_scan_and_best() {
+  Serial.println("SCAN+BEST TEST:");
+  setMotion(TURNING);
+  performScan();
+  setMotion(STOPPED);
+
+  selectBestDirection();
+
+  Serial.print("bestAngle=");
+  Serial.print(bestAngle);
+  Serial.print("  bestDistance=");
+  Serial.println(bestDistance);
+
+  for (int i = 0; i < SCAN_STEPS; i++) {
+    Serial.print(i * SCAN_ANGLE);
+    Serial.print(": ");
+    Serial.println(distances[i]);
+  }
+}
+
+void calib_forward_1s() {
+  Serial.println("Forward 1s (watch drift).");
+  setMotion(MOVING_FWD);
+  moveForward();
+  delay(1000);
+  stopWheels();
+  setMotion(STOPPED);
+  Serial.println("Done.");
+}
+
+void CalibrationLoop() {
+  static bool first = true;
+  if (first) { first = false; printCalMenu(); }
+
+  if (Serial.available()) {
+    char c = Serial.read();
+    // flush extra chars
+    while (Serial.available()) Serial.read();
+
+    if      (c == 'd') calib_distance_stream();
+    else if (c == 't') calib_turn_sign_test();
+    else if (c == 'q') calib_square_test();
+    else if (c == 's') calib_scan_only();
+    else if (c == 'b') calib_scan_and_best();
+    else if (c == 'f') calib_forward_1s();
+    else if (c == 'x') { stopWheels(); setMotion(STOPPED); Serial.println("Stopped."); }
+    else if (c == 'm') printCalMenu();
+    else Serial.println("Unknown key. Press 'm' for menu.");
+  }
+}
+
 
 void loop() {
     if (mode == ALGORITHM1) {
@@ -492,7 +841,6 @@ void loop() {
     } else if (mode == ALGORITHM2) {
         Algorithm2Loop();
     } else if (mode == CALIBRATION) {
-        moveForward();
-        delay(1000);
+        CalibrationLoop();
     }
 }
