@@ -8,14 +8,26 @@
 #define SWITCH_PIN       2
 
 #define LEFT_STOP   1418
-#define RIGHT_STOP  1512
+#define RIGHT_STOP  1518
 
 #define DRIVE_DELTA 600 // speed for moving forward / turning
 #define OBSTACLE_CM 25 // stop if object closer than this
 #define SCAN_ANGLE 45 // degrees to turn per scan step
 #define SCAN_STEPS 8 // number of scan steps (360/45)
-#define ANGLE_DELTA 63 // delay per 10 degrees turn
-#define DISTANCE_DELTA 100 // milliseconds per cm, <<to be calibrated>>
+#define DISTANCE_DELTA 20 // milliseconds per cm, <<to be calibrated>>
+
+// Tunables (start here, then calibrate)
+#define TURN_FAST_DELTA   600   // keep your current speed
+#define TURN_SLOW_DELTA   250   // slower near the end
+#define TURN_BRAKE_DELTA  200   // tiny reverse pulse
+#define TURN_BRAKE_MS      18   // 12–25ms usually
+#define TURN_SETTLE_MS     30   // let chassis settle
+
+#define FWD_FAST_DELTA   600
+#define FWD_BRAKE_DELTA  180
+#define FWD_BRAKE_MS      15
+#define FWD_SETTLE_MS     20
+
 
 enum Mode {
     ALGORITHM1,
@@ -32,15 +44,44 @@ enum State {
     AVOID_STOP
 };
 
+enum MotionState {
+    MOVING_FWD,
+    TURNING,
+    REVERSING,
+    STOPPED
+};
+
+MotionState motion = STOPPED;
+unsigned long motionChangedMs = 0;
+
+void setMotion(MotionState m) {
+    motion = m;
+    motionChangedMs = millis();
+}
+
+enum Algo2State {
+  A2_FORWARD,
+  A2_TURN_90,
+  A2_BACKUP,
+  A2_SCAN,
+  A2_TURN_TO_BEST,
+  A2_RECOVER_FORWARD
+};
+
+
 // Global array for storing distances at different angles
 long distances[SCAN_STEPS]; // from 180 to -180 in steps of SCAN_ANGLE
 long bestAngle = -1;
 long bestDistance = -1;
 
+int LEFT_TRIM  = 0;
+int RIGHT_TRIM = -20;
+
 Servo leftWheel;
 Servo rightWheel;
 State currentState = SCAN;
-Mode mode = ALGORITHM1; // select mode here
+
+Mode mode = ALGORITHM1;
 
 
 // HC-SR04 Ultrasonic distance sensor reading
@@ -121,6 +162,46 @@ int getAverageDistance() {
     return total / count;
 }
 
+struct DistanceState {
+    long cm = -1;
+    unsigned long lastMs = 0;
+    bool valid = false;
+};
+
+DistanceState dist;
+
+void updateDistance() {
+    static unsigned long lastPing = 0;
+
+    if (millis() - lastPing < 60) return;
+    lastPing = millis();
+
+    long d = getDistanceStable();
+    if (d > 0) {
+        dist.cm = d;
+        dist.lastMs = millis();
+        dist.valid = true;
+    } else {
+        if (millis() - dist.lastMs > 300) dist.valid = false;
+    }
+}
+
+bool distanceUsable() {
+    if (!dist.valid) return false;
+    if (millis() - motionChangedMs < 80) return false;
+    if (motion == TURNING) return false;
+    return true;
+}
+
+void debugDistance() {
+  Serial.print("Dist: ");
+  Serial.print(dist.cm);
+  Serial.print(" cm  valid=");
+  Serial.print(dist.valid);
+  Serial.print(" age=");
+  Serial.println(millis() - dist.lastMs);
+}
+
 // Scanning function
 void performScan() {
     long distance = 0;
@@ -130,10 +211,7 @@ void performScan() {
         turnDegrees(SCAN_ANGLE);
         distance = getAverageDistance();
         distances[i] = distance;
-        Serial.print("Angle: ");
-        Serial.println((i - SCAN_STEPS / 2) * SCAN_ANGLE);
-        Serial.print("Distance: ");
-        Serial.println(distance);
+        debugDistance();
         stopWheels();
     }
     Serial.println("Scan complete.");
@@ -154,10 +232,7 @@ void quick_scan() {
         turnDegrees(SCAN_ANGLE * 2);
         distance = getAverageDistance();
         distances[i] = distance;
-        Serial.print("Angle: ");
-        Serial.println((i - SCAN_STEPS / 2) * SCAN_ANGLE);
-        Serial.print("Distance: ");
-        Serial.println(distance);
+        debugDistance();
         stopWheels();
     }
 
@@ -231,36 +306,73 @@ void alignToBestDirection() {
 
 // turn x amount of degrees
 void turnDegrees(int degrees) {
-    for (int i = 0; i < abs(degrees) / 10; i++) {
-        if (degrees > 0) { // turn right
-            leftWheel.write(LEFT_STOP + DRIVE_DELTA);
-            rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
-        } else { // turn left
-            leftWheel.write(LEFT_STOP - DRIVE_DELTA);
-            rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
-        }
-        delay(ANGLE_DELTA);
-    }
+    if (degrees == 0) return;
+
+    int dir = (degrees > 0) ? +1 : -1;      // +1 = right, -1 = left
+    float a  = abs(degrees) / 90.0f;
+
+    int tFast = (int)(297 * a);
+    int tSlow = (int)(40  * a);
+
+    if (tFast < 10) tFast = 10;
+    if (tSlow < 8)  tSlow = 8;
+
+    spinDelta(dir * TURN_FAST_DELTA);
+    delay(tFast);
+    spinDelta(dir * TURN_SLOW_DELTA);
+    delay(tSlow);
+    spinDelta(-dir * TURN_BRAKE_DELTA);
+    delay(TURN_BRAKE_MS);
+
     stopWheels();
-    delay(200);
+    delay(TURN_SETTLE_MS);
 }
 
 void stopWheels() {
-    leftWheel.write(LEFT_STOP);
-    rightWheel.write(RIGHT_STOP);
+    leftWheel.writeMicroseconds(LEFT_STOP);
+    rightWheel.writeMicroseconds(RIGHT_STOP);
+}
+
+void driveDelta(int delta) {
+    setWheelsUS(LEFT_STOP + delta + LEFT_TRIM, RIGHT_STOP - delta + RIGHT_TRIM);
+}
+
+void spinDelta(int delta) {
+    setWheelsUS(LEFT_STOP + delta + LEFT_TRIM, RIGHT_STOP + delta + RIGHT_TRIM);
+}
+
+void setWheelsUS(int leftUS, int rightUS) {
+    leftWheel.writeMicroseconds(leftUS);
+    rightWheel.writeMicroseconds(rightUS);
+}
+
+// Move forward function
+void moveForwardDistance(int cm) {
+  long t = (long)cm * DISTANCE_DELTA;
+
+  driveDelta(+FWD_FAST_DELTA);
+  delay(t);
+
+  driveDelta(-FWD_BRAKE_DELTA);
+  delay(FWD_BRAKE_MS);
+
+  stopWheels();
+  delay(FWD_SETTLE_MS);
 }
 
 void moveForward() {
-    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
-    rightWheel.write(RIGHT_STOP - DRIVE_DELTA);
+    driveDelta(DRIVE_DELTA);
 }
 
 void turn90right() {
-    leftWheel.write(LEFT_STOP + DRIVE_DELTA);
-    rightWheel.write(RIGHT_STOP + DRIVE_DELTA);
-    delay(600); // adjust this delay for a proper 90 degree turn
+    spinDelta(+TURN_FAST_DELTA);
+    delay(297);
+    spinDelta(+TURN_SLOW_DELTA);
+    delay(40);
+    spinDelta(-TURN_BRAKE_DELTA);
+    delay(TURN_BRAKE_MS);
     stopWheels();
-    delay(200);
+    delay(TURN_SETTLE_MS);
 }
 
 void setup() {
@@ -285,11 +397,13 @@ void setup() {
         mode = ALGORITHM1;
         Serial.println("Algorithm 1");
     } else {
-        mode = CALIBRATION;
-        Serial.println("Calibration Mode");
+        mode = ALGORITHM2;
+        Serial.println("Algorithm 2");
     }
+    stopWheels();
 }
 
+/*
 // Algo 1 main loop
 void Algorithm1Loop() {
     switch (currentState) {
@@ -329,7 +443,7 @@ void Algorithm1Loop() {
             currentState = SCAN;
             break;
     }
-}
+}*/
 
 void Algorithm2Loop() {
     static unsigned long lastPing = 0;
@@ -373,10 +487,12 @@ void Algorithm2Loop() {
 
 void loop() {
     if (mode == ALGORITHM1) {
-        Algorithm1Loop();
+        //Algorithm1Loop();
+        delay(1000); // placeholder
     } else if (mode == ALGORITHM2) {
         Algorithm2Loop();
     } else if (mode == CALIBRATION) {
-        stopWheels();
+        moveForward();
+        delay(1000);
     }
 }

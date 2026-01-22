@@ -18,3 +18,5 @@ void turnLeft();
 void turnRight();
 void turnDegrees(int);
 void turn90right();
+void setWheelsUS(int, int);
+void spinDelta(int);
