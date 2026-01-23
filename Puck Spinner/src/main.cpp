@@ -710,106 +710,128 @@ void Algorithm2Loop() {
     }
 }
 
-// -------------- DEBUGGING --------------
+// -------------- DEBUGGING --------------//
 void printCalMenu() {
-  Serial.println();
-  Serial.println("=== CALIBRATION MENU ===");
-  Serial.println("d  -> stream distance (stable)");
-  Serial.println("t  -> turn sign test (+45 then -45)");
-  Serial.println("q  -> square test (4x 90 degrees)");
-  Serial.println("s  -> scan only (print bins 0..315)");
-  Serial.println("b  -> scan + best direction (prints bestAngle)");
-  Serial.println("f  -> forward for 1s (check drift)");
-  Serial.println("x  -> stop wheels");
-  Serial.println("========================");
+    Serial.println();
+    Serial.println("=== CALIBRATION MENU ===");
+    Serial.println("d  -> stream distance (stable)");
+    Serial.println("t  -> turn sign test (+45 then -45)");
+    Serial.println("q  -> square test (4x 90 degrees)");
+    Serial.println("s  -> scan only (print bins 0..315)");
+    Serial.println("b  -> scan + best direction (prints bestAngle)");
+    Serial.println("f  -> forward for 1s (check drift)");
+    Serial.println("r  -> manual drive mode (i/k/j/l/;)");
+    Serial.println("x  -> stop wheels");
+    Serial.println("m  -> show this menu");
+    Serial.println("========================");
 }
 
 void calib_distance_stream() {
-  Serial.println("Distance stream (press any key to stop)...");
-  while (!Serial.available()) {
-    updateDistance();
-    if (dist.valid) {
-      Serial.print("cm=");
-      Serial.print(dist.cm);
-      Serial.print(" age=");
-      Serial.println(millis() - dist.lastMs);
-    } else {
-      Serial.println("cm=INVALID");
+    Serial.println("Distance stream (press any key to stop)...");
+    while (!Serial.available()) {
+        updateDistance();
+        if (dist.valid) {
+            Serial.print("cm=");
+            Serial.print(dist.cm);
+            Serial.print(" age=");
+            Serial.println(millis() - dist.lastMs);
+        } else {
+            Serial.println("cm=INVALID");
+        }
+        delay(120);
     }
-    delay(120);
-  }
-  while (Serial.available()) Serial.read();
+    while (Serial.available()) Serial.read();
 }
 
 void calib_turn_sign_test() {
-  Serial.println("TURN SIGN TEST:");
-  Serial.println("Step 1: turnDegrees(+45). Robot should rotate RIGHT.");
-  setMotion(TURNING);
-  turnDegrees(+45);
-  setMotion(STOPPED);
-  delay(400);
+    Serial.println("TURN SIGN TEST:");
+    Serial.println("Step 1: turnDegrees(+45). Robot should rotate RIGHT.");
+    setMotion(TURNING);
+    turnDegrees(+45);
+    setMotion(STOPPED);
+    delay(400);
 
-  Serial.println("Step 2: turnDegrees(-45). Robot should return to original heading.");
-  setMotion(TURNING);
-  turnDegrees(-45);
-  setMotion(STOPPED);
+    Serial.println("Step 2: turnDegrees(-45). Robot should return to original heading.");
+    setMotion(TURNING);
+    turnDegrees(-45);
+    setMotion(STOPPED);
 
-  Serial.println("If it doesn't return, your sign convention is wrong OR timing isn't symmetric.");
+    Serial.println("If it doesn't return, your sign convention is wrong OR timing isn't symmetric.");
 }
 
 void calib_square_test() {
-  Serial.println("SQUARE TEST: doing 4x 90 degrees. Should end near original heading.");
-  for (int i = 0; i < 4; i++) {
-    setMotion(TURNING);
-    turnDegrees(90);
-    setMotion(STOPPED);
-    delay(500);
-  }
-  Serial.println("Done. If it's drifting a lot, your turn scaling isn't linear or you're slipping.");
+    Serial.println("SQUARE TEST: doing 4x 90 degrees. Should end near original heading.");
+    for (int i = 0; i < 4; i++) {
+        setMotion(TURNING);
+        turnDegrees(90);
+        setMotion(STOPPED);
+        delay(500);
+    }
+    Serial.println("Done. If it's drifting a lot, your turn scaling isn't linear or you're slipping.");
 }
 
 void calib_scan_only() {
-  Serial.println("SCAN ONLY TEST: place robot and do not touch it during scan.");
-  setMotion(TURNING);
-  performScan();
-  setMotion(STOPPED);
+    Serial.println("SCAN ONLY TEST: place robot and do not touch it during scan.");
+    setMotion(TURNING);
+    performScan();
+    setMotion(STOPPED);
 
-  Serial.println("Scan bins:");
-  for (int i = 0; i < SCAN_STEPS; i++) {
-    Serial.print(i * SCAN_ANGLE);
-    Serial.print(": ");
-    Serial.println(distances[i]);
-  }
+    Serial.println("Scan bins:");
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        Serial.print(i * SCAN_ANGLE);
+        Serial.print(": ");
+        Serial.println(distances[i]);
+    }
 }
 
 void calib_scan_and_best() {
-  Serial.println("SCAN+BEST TEST:");
-  setMotion(TURNING);
-  performScan();
-  setMotion(STOPPED);
+    Serial.println("SCAN+BEST TEST:");
+    setMotion(TURNING);
+    performScan();
+    setMotion(STOPPED);
 
-  selectBestDirection();
+    selectBestDirection();
 
-  Serial.print("bestAngle=");
-  Serial.print(bestAngle);
-  Serial.print("  bestDistance=");
-  Serial.println(bestDistance);
+    Serial.print("bestAngle=");
+    Serial.print(bestAngle);
+    Serial.print("  bestDistance=");
+    Serial.println(bestDistance);
 
-  for (int i = 0; i < SCAN_STEPS; i++) {
-    Serial.print(i * SCAN_ANGLE);
-    Serial.print(": ");
-    Serial.println(distances[i]);
-  }
+    for (int i = 0; i < SCAN_STEPS; i++) {
+        Serial.print(i * SCAN_ANGLE);
+        Serial.print(": ");
+        Serial.println(distances[i]);
+    }
 }
 
 void calib_forward_1s() {
-  Serial.println("Forward 1s (watch drift).");
-  setMotion(MOVING_FWD);
-  moveForward();
-  delay(1000);
-  stopWheels();
-  setMotion(STOPPED);
-  Serial.println("Done.");
+    Serial.println("Forward 1s (watch drift).");
+    setMotion(MOVING_FWD);
+    moveForward();
+    delay(1000);
+    stopWheels();
+    setMotion(STOPPED);
+    Serial.println("Done.");
+}
+
+void manualDrive() {
+    Serial.println("MANUAL DRIVE MODE: i=forward, k=reverse, j=left, l=right, ;=exit");
+    bool running = true;
+    while (running) {
+        if (Serial.available()) {
+        char c = Serial.read();
+
+        while (Serial.available()) Serial.read();
+
+        if      (c == 'i') { moveForward(); setMotion(MOVING_FWD); Serial.println("Moving forward."); }
+        else if (c == 'k') { moveReverse(); setMotion(REVERSING); Serial.println("Moving reverse."); }
+        else if (c == 'j') { setMotion(TURNING); turnDegrees(-30); setMotion(STOPPED); Serial.println("Turned left 30°."); }
+        else if (c == 'l') { setMotion(TURNING); turnDegrees(+30); setMotion(STOPPED); Serial.println("Turned right 30°."); }
+        else if (c == ';') { stopWheels(); setMotion(STOPPED); running = false; Serial.println("Exiting manual drive."); }
+        else Serial.println("Unknown key. Use i/k/j/l/;.");
+        }
+        delay(50);
+    }
 }
 
 void CalibrationLoop() {
@@ -828,6 +850,7 @@ void CalibrationLoop() {
     else if (c == 'b') calib_scan_and_best();
     else if (c == 'f') calib_forward_1s();
     else if (c == 'x') { stopWheels(); setMotion(STOPPED); Serial.println("Stopped."); }
+    else if (c == 'r') manualDrive();
     else if (c == 'm') printCalMenu();
     else Serial.println("Unknown key. Press 'm' for menu.");
   }
